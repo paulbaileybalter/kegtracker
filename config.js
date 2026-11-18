@@ -12,13 +12,8 @@
  * set up yet) it quietly falls back to saving on this device only —
  * nothing breaks either way.
  *
- * One-time setup to turn sync on, see README.md "Multi-device sync" for
- * the full walk-through:
- *   1. Cloudflare dashboard → Workers & Pages → KV → Create a namespace.
- *   2. Put that namespace's id into wrangler.toml under kv_namespaces
- *      (binding = "KEG_KV"), or add the binding from this Worker's
- *      Settings → Bindings → Add → KV namespace instead.
- *   3. Redeploy.
+ * No setup needed: wrangler.toml declares the KV binding and Cloudflare
+ * creates the namespace automatically on the first deploy.
  *
  * The two options below are optional escape hatches — leave them alone
  * unless you have a specific reason to change them (e.g. you renamed the

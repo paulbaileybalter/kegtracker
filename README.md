@@ -131,16 +131,10 @@ KV binding isn't set up yet, every sync call just fails harmlessly and the
 tool keeps working perfectly well as a single-device, localStorage-only
 sheet.
 
-One-time setup, after your first deploy:
-1. Cloudflare dashboard → **Workers & Pages → KV** → **Create a namespace**
-   (any name, e.g. `keg-tracker-kv`) — copy its **id**
-2. Either:
-   - put that id into `wrangler.toml` under `[[kv_namespaces]]` →
-     `id = "..."`, then redeploy (`npx wrangler deploy`), **or**
-   - skip editing the file and instead go to your Worker's own
-     **Settings → Bindings → Add → KV namespace**, variable name
-     **`KEG_KV`**, pick the namespace you just created, **Save** (this
-     takes effect immediately, no redeploy needed)
+No setup needed: `wrangler.toml` declares the `KEG_KV` binding without an
+id, so Wrangler creates the KV namespace automatically on the first deploy
+and reuses it afterwards (needs Wrangler 4.45 or newer, which Cloudflare's
+build uses by default).
 
 After that, every device that opens the site reads and writes the same KV
 key, polling for changes every ~15 seconds and whenever the tab regains
@@ -165,7 +159,8 @@ project — `worker.js` + `wrangler.toml` are the pieces that make that work.
    the **Deploy command** in that project's **Settings → Builds &
    deployments** must be `npx wrangler deploy` (the default) — do **not**
    use `wrangler pages deploy`, which is for classic Pages projects only.
-3. Follow the one-time KV setup above to turn on multi-device sync.
+3. Multi-device sync turns itself on — the KV namespace is created
+   automatically on first deploy.
 
 ### Netlify
 1. Go to [app.netlify.com/drop](https://app.netlify.com/drop)

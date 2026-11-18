@@ -1,17 +1,14 @@
 # BALTER BREWING — KEG TRACKER
 # Cloudflare Worker configuration (deployed with `npx wrangler deploy`).
 #
-# This serves the static site as Worker assets and runs worker.js for the
-# one API route the app needs (/api/keg-state, for multi-device sync).
+# Serves the static site as Worker assets and runs worker.js for the one
+# API route the app needs (/api/keg-state, for multi-device sync).
 #
-# IMPORTANT:
-#  1. `name` must match your actual Worker name exactly (the part before
-#     ".<your-subdomain>.workers.dev" — e.g. "kegtracker" for
-#     kegtracker.paul-778.workers.dev).
-#  2. You must create a KV namespace and fill in its id below (or add the
-#     binding from the dashboard instead — see README.md "Multi-device
-#     sync"). Without this, the site still works, it just won't sync
-#     between devices.
+# `name` must match your Worker name (kegtracker for
+# kegtracker.paul-778.workers.dev).
+#
+# The KV namespace has NO id on purpose: Wrangler's automatic provisioning
+# creates it on the first deploy and reuses it on every deploy after that.
 
 name = "kegtracker"
 main = "worker.js"
@@ -23,4 +20,3 @@ binding = "ASSETS"
 
 [[kv_namespaces]]
 binding = "KEG_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
