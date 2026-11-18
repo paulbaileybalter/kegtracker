@@ -351,11 +351,11 @@
      receive a new suggestion. That way a week isn't skipped just
      because one day in it already has something in it.
      Deliveries prefer Monday–Thursday; Friday is only used as a fallback
-     when no Mon–Thu slot is available in time (never weekends).
-     Every delivery is a full load (loadSize, 560 by default) — if a real
-     delivery ever comes in at a different amount, just edit that day's
-     Inbound cell by hand afterwards; auto-suggest only ever proposes
-     whole loads.
+     when no Mon–Thu slot is available in time (never weekends). A single
+     day can only ever take one load (560 a day, no more, no less) — loads
+     are never stacked onto a day that already has one, even if that
+     leaves a breach unresolved; if a real delivery ever comes in at a
+     different amount, just edit that day's Inbound cell by hand.
      Two-phase per week:
        1) Prevent any day's closing stock from dropping below minStock —
           placing a full load on the latest possible blank Mon–Thu day at
@@ -406,26 +406,26 @@
       }
       // Finds the latest eligible day at-or-before idx. Mon–Thu is tried
       // first across the whole range before Friday is considered at all,
-      // so Friday is only ever used when truly necessary. Within each tier,
-      // a day with nothing suggested yet this run is preferred (to avoid
-      // stacking multiple loads on one day) before falling back to a day
-      // this run already placed a load on (peak-period stacking) — but a
-      // locked (already-entered) day is never touched.
+      // so Friday is only ever used when truly necessary. A day can only
+      // ever take one load (560 a day, no more, no less — never stacked),
+      // so only a day with nothing on it yet (this run or otherwise) is
+      // ever eligible; a locked (already-entered) day is never touched.
+      // If every eligible day in the week is already spoken for, this
+      // returns -1 and that particular breach/top-up simply can't be
+      // resolved within the week — it's left for a manual look, rather
+      // than silently doubling up a delivery that can't really happen.
       function findSlot(scanFrom, scanTo, step, requireAtOrBefore, idx) {
-        function tryTier(dayFilter, allowStacked) {
+        function tryTier(dayFilter) {
           for (var j = scanFrom; (step > 0 ? j <= scanTo : j >= scanTo); j += step) {
             if (requireAtOrBefore && j > idx) continue;
-            if (!dayFilter(g.days[j].date) || locked[j]) continue;
-            if (!allowStacked && inboundPerDay[j] !== 0) continue;
+            if (!dayFilter(g.days[j].date) || locked[j] || inboundPerDay[j] !== 0) continue;
             return j;
           }
           return -1;
         }
         var r;
-        r = tryTier(isPreferredDeliveryDay, false); if (r !== -1) return r;
-        r = tryTier(isFridayDeliveryDay, false); if (r !== -1) return r;
-        r = tryTier(isPreferredDeliveryDay, true); if (r !== -1) return r;
-        r = tryTier(isFridayDeliveryDay, true); if (r !== -1) return r;
+        r = tryTier(isPreferredDeliveryDay); if (r !== -1) return r;
+        r = tryTier(isFridayDeliveryDay); if (r !== -1) return r;
         return -1;
       }
       function latestSlotAtOrBefore(idx) { return findSlot(idx, 0, -1, true, idx); }
