@@ -121,6 +121,22 @@ Renders the Delivery schedule list as a formatted email (same layout as your
 current CUB order), with **Copy formatted email** (paste into Outlook/Gmail
 with formatting intact), plain-text copy, or download as an image.
 
+## Password protection
+
+The whole site (pages and the sync API) sits behind one shared password,
+enforced by `worker.js`. The password is **never stored in the repo** — it's
+a Worker secret:
+
+1. Cloudflare dashboard → **Workers & Pages → kegtracker → Settings →
+   Variables and Secrets → Add** → type **Secret**, name **`SITE_PASSWORD`**,
+   value = your chosen password → Deploy.
+2. To change it later, edit that secret. Changing it signs everyone out.
+
+Sessions last 30 days per device; **Sign out** is in the top bar. Until the
+secret is set the site stays locked (shows a setup message). After 10 wrong
+attempts from one IP, logins are paused for 15 minutes. Use a long password
+or passphrase.
+
 ## Multi-device sync — Cloudflare KV
 
 Syncs the office laptop, your phone, and the warehouse tablet automatically
