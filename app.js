@@ -373,6 +373,28 @@
     var s = App.settings;
     var anyFilled = false;
 
+    // Deliveries are always exactly one full load per day. Any entry in the
+    // three future weeks that isn't blank, 0, or a single load (e.g. 1170,
+    // 100, 200 left over from older versions) is invalid — offer to clear
+    // them so they can be re-planned properly. "This week" is never touched.
+    var badDays = [];
+    groupByWeek(computeSequence()).forEach(function (grp, gi) {
+      if (gi < 1) return;
+      grp.days.forEach(function (r) {
+        var raw = dayEntry(r.date).inbound;
+        var v = num(raw);
+        if (raw !== "" && v !== 0 && v !== s.loadSize) badDays.push({ date: r.date, v: v });
+      });
+    });
+    if (badDays.length) {
+      var list = badDays.slice(0, 6).map(function (b) { return b.date + " (" + b.v + ")"; }).join(", ") + (badDays.length > 6 ? ", \u2026" : "");
+      if (window.confirm(badDays.length + " delivery entr" + (badDays.length === 1 ? "y isn't" : "ies aren't") + " a single " + s.loadSize + " load:\n" + list +
+          "\n\nDeliveries are one full load per day. Clear these and re-plan them?")) {
+        badDays.forEach(function (b) { setDayField(b.date, "inbound", ""); });
+        anyFilled = true;
+      }
+    }
+
     // Process week-by-week (not all at once) so a later week's opening
     // stock correctly reflects any delivery just suggested for an earlier
     // week in this same run, rather than the stale pre-suggestion chain.
@@ -613,7 +635,9 @@
 
       var inboundRow = '<tr><td>Inbounds</td>' + g.days.map(function (r) {
         var val = dayEntry(r.date).inbound;
-        return '<td class="' + (isWeekend(r.date) ? "is-weekend" : "") + '"><input type="text" inputmode="numeric" pattern="[0-9]*" class="day-input" data-date="' + r.date + '" data-field="inbound" value="' + esc(val) + '" placeholder="0"></td>';
+        var nv = num(val);
+        var bad = val !== "" && nv !== 0 && nv !== s.loadSize;
+        return '<td class="' + (isWeekend(r.date) ? "is-weekend" : "") + '"><input type="text" inputmode="numeric" pattern="[0-9]*" class="day-input' + (bad ? " day-input--badload" : "") + '"' + (bad ? ' title="Not a single ' + s.loadSize + ' load — deliveries are one full load per day"' : "") + ' data-date="' + r.date + '" data-field="inbound" value="' + esc(val) + '" placeholder="0"></td>';
       }).join("") + '<td style="font-family:var(--font-data);font-weight:700;">' + (totalInb || "") + '</td></tr>';
 
       var closingRow = '<tr class="row-closing"><td>Daily total stock on hand</td>' + g.days.map(function (r) {

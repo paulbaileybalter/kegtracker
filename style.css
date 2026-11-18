@@ -469,3 +469,6 @@ button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visib
   max-height:55vh; overflow:auto; background: var(--paper);
 }
 .email-preview{ padding:4px; }
+
+/* Inbound entry that isn't exactly one full load */
+.day-input--badload{ background:#fdeceb; border-color:#a8362a; color:#a8362a; font-weight:700; }
