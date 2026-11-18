@@ -1,5 +1,5 @@
 /* =========================================================
-   BALTER BREWING — KEG ORDERING PORTAL
+   BALTER BREWING — KEG TRACKER
    Design tokens (shared with the Production Plan Attainment /
    Logistics Daily Handover sites)
    ========================================================= */
@@ -342,6 +342,22 @@ button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visib
   .card{ box-shadow:none; border:1px solid #000; break-inside: avoid; }
   .topbar{ position:static; backdrop-filter:none; }
 }
+
+/* =========================================================
+   LIVE BREWERY BOARD IMPORT (drag-and-drop)
+   ========================================================= */
+.board-import{ margin-bottom:16px; }
+.board-dropzone{
+  border:1.5px dashed #CFCCBF; border-radius: var(--radius-md); padding:20px 16px; text-align:center;
+  cursor:pointer; transition: background .12s ease, border-color .12s ease; background: var(--paper);
+}
+.board-dropzone:hover, .board-dropzone:focus-visible, .board-dropzone.is-drag{ border-color: var(--purple); background: rgba(117,102,160,.06); outline:none; }
+.board-dropzone svg{ width:24px; height:24px; color: var(--purple); margin-bottom:6px; }
+.board-dropzone__title{ font-weight:700; font-size:13.5px; }
+.board-dropzone__sub{ font-size:12px; color: var(--ink-soft); margin-top:3px; }
+.board-dropzone__link{ color: var(--purple); font-weight:600; text-decoration:underline; }
+.board-import__status{ font-size:12px; font-weight:600; color: var(--mint-ink); margin-top:8px; min-height:14px; }
+.board-import__status.is-error{ color:#a8362a; }
 
 /* =========================================================
    DAILY TRACKING — week blocks (mirrors the Excel Mon–Sun grid)

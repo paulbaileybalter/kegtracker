@@ -1,6 +1,6 @@
 {
-  "name": "Balter Brewing — Keg Ordering Portal",
-  "short_name": "Keg Ordering",
+  "name": "Balter Brewing — Keg Tracker",
+  "short_name": "Keg Tracker",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#ffffff",

@@ -1,5 +1,5 @@
 /**
- * BALTER BREWING — KEG ORDERING DESK
+ * BALTER BREWING — KEG TRACKER
  * Application logic (no build step, no framework — plain JS)
  *
  * Data model mirrors the "2026 Keg Tracking Platform" Excel tab exactly:
@@ -219,41 +219,47 @@
   }
 
   /* ---------------------------------------------------------
-     CLOUD SYNC (optional — JSONBin.io, configured in config.js)
+     CLOUD SYNC — Cloudflare Pages Function backed by a KV namespace.
+     Nothing to configure client-side (no keys) — this just calls a
+     same-origin endpoint. If the site isn't deployed on Cloudflare
+     Pages with the KV binding set up (see README), every call below
+     fails harmlessly and the tool quietly runs on localStorage only.
   --------------------------------------------------------- */
-  var cloudCfg = (window.KEG_CONFIG && window.KEG_CONFIG.cloudSync) || { enabled: false };
+  var CLOUD_ENDPOINT = (window.KEG_CONFIG && window.KEG_CONFIG.cloudSync && window.KEG_CONFIG.cloudSync.endpoint) || "/api/keg-state";
+  var CLOUD_POLL_SECONDS = (window.KEG_CONFIG && window.KEG_CONFIG.cloudSync && window.KEG_CONFIG.cloudSync.pollSeconds) || 15;
+  var cloudAvailable = null; // null = not probed yet, then true/false once we know
 
-  function cloudReady() { return !!(cloudCfg.enabled && cloudCfg.binId && cloudCfg.apiKey); }
+  function cloudReady() { return cloudAvailable === true; }
+
   function pushToCloud() {
-    if (!cloudReady()) return;
     var payload = {
       ledger: App.ledger, weekNotes: App.weekNotes, pointer: App.pointer,
       settings: App.settings, history: App.history, savedAt: Date.now()
     };
-    fetch("https://api.jsonbin.io/v3/b/" + cloudCfg.binId, {
+    fetch(CLOUD_ENDPOINT, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Master-Key": cloudCfg.apiKey, "X-Bin-Versioning": "false" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     }).then(function (res) {
-      if (res && res.ok) setSyncStatus("saved");
-      else if (res) setSyncStatus("error");
-    }).catch(function () { setSyncStatus("error"); });
+      cloudAvailable = !!(res && res.ok);
+      setSyncStatus("saved");
+    }).catch(function () { cloudAvailable = false; setSyncStatus("saved"); });
   }
 
   function fetchCloud() {
-    if (!cloudReady()) return Promise.resolve(null);
-    return fetch("https://api.jsonbin.io/v3/b/" + cloudCfg.binId + "/latest", {
-      headers: { "X-Master-Key": cloudCfg.apiKey }
-    }).then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (json) { return json && json.record ? json.record : null; })
-      .catch(function () { return null; });
+    return fetch(CLOUD_ENDPOINT).then(function (res) {
+      if (!res.ok) { cloudAvailable = false; return null; }
+      return res.json();
+    }).then(function (json) {
+      cloudAvailable = true;
+      return json || null;
+    }).catch(function () { cloudAvailable = false; return null; });
   }
 
   function pullFromCloud(isBackground) {
-    if (!cloudReady()) return;
     if (!isBackground) setSyncStatus("saving");
     fetchCloud().then(function (remote) {
-      if (!remote) { if (!isBackground) setSyncStatus("saved"); return; }
+      if (!remote) { setSyncStatus("saved"); return; }
       var changed = false;
       if (remote.ledger) { App.ledger = remote.ledger; changed = true; }
       if (remote.weekNotes) { App.weekNotes = remote.weekNotes; changed = true; }
@@ -261,7 +267,7 @@
       if (Array.isArray(remote.history)) { App.history = remote.history; changed = true; }
       if (changed) { renderAll(); showToast("Updated from another device"); }
       setSyncStatus("saved");
-    }).catch(function () { setSyncStatus("error"); });
+    }).catch(function () { setSyncStatus("saved"); });
   }
 
   function setSyncStatus(state) {
@@ -270,7 +276,6 @@
     if (!dot || !text) return;
     dot.className = "sync-dot";
     if (state === "saving") { dot.classList.add("is-saving"); text.textContent = "Saving…"; }
-    else if (state === "error") { dot.classList.add("is-error"); text.textContent = cloudReady() ? "Sync error — saved locally" : "Saved to this device"; }
     else {
       dot.classList.add("is-saved");
       text.textContent = cloudReady() ? "Synced across devices" : "Saved to this device";
@@ -347,19 +352,20 @@
      because one day in it already has something in it.
      Deliveries prefer Monday–Thursday; Friday is only used as a fallback
      when no Mon–Thu slot is available in time (never weekends).
-     Load sizing is flexible rather than rigid multiples of loadSize: a
-     load is only ever trimmed down (never rounded up), so a delivery is
-     at most loadSize but can be smaller when that's all that's needed to
-     clear the floor, hit the target, or avoid breaching the hard ceiling.
+     Every delivery is a full load (loadSize, 560 by default) — if a real
+     delivery ever comes in at a different amount, just edit that day's
+     Inbound cell by hand afterwards; auto-suggest only ever proposes
+     whole loads.
      Two-phase per week:
        1) Prevent any day's closing stock from dropping below minStock —
-          placing a (possibly trimmed) delivery on the latest possible
-          blank Mon–Thu day at or before the shortfall, falling back to
-          Friday only if no Mon–Thu slot remains in time.
+          placing a full load on the latest possible blank Mon–Thu day at
+          or before the shortfall, falling back to Friday only if no
+          Mon–Thu slot remains in time.
        2) Top up so the week's last day closes at/above targetStock,
-          adding to the latest available blank day, trimmed so no day
-          between the delivery and week's end is pushed above
-          hardMaxStock. maxStock is a softer, flexible ceiling — it's
+          adding a full load to the latest available blank day — unless
+          that load would push any day between it and week's end above
+          hardMaxStock, in which case top-up stops there rather than
+          placing a partial load. maxStock is a softer, flexible ceiling —
           preferred but not enforced, since clearing the floor and (within
           the hard ceiling) hitting the target take priority.
   --------------------------------------------------------- */
@@ -425,10 +431,8 @@
       function latestSlotAtOrBefore(idx) { return findSlot(idx, 0, -1, true, idx); }
       function latestSlot() { return findSlot(n - 1, 0, -1, false, -1); }
 
-      // Phase 1 — never drop below minStock. Each placement is trimmed to
-      // exactly what's needed to clear that breach (rounded up to the
-      // nearest 10 kegs), capped at loadSize — so a small shortfall gets a
-      // small delivery rather than always a full load.
+      // Phase 1 — never drop below minStock. Always a full load; clearing
+      // the floor takes priority over every ceiling.
       for (var guard1 = 0; guard1 < 50; guard1++) {
         var sim1 = simulate();
         var breachIdx = -1;
@@ -436,26 +440,22 @@
         if (breachIdx === -1) break;
         var placeIdx = latestSlotAtOrBefore(breachIdx);
         if (placeIdx === -1) break; // no eligible day available in time — can't prevent within this block
-        var shortfall = s.minStock - sim1[breachIdx];
-        var amount1 = Math.min(s.loadSize, Math.ceil(shortfall / 10) * 10);
-        inboundPerDay[placeIdx] += amount1;
+        inboundPerDay[placeIdx] += s.loadSize;
       }
 
-      // Phase 2 — top up so the week closes at/above target. Trimmed the
-      // same way, and additionally capped so no day from the delivery
-      // through week's end is pushed above hardMaxStock.
+      // Phase 2 — top up so the week closes at/above target, one full
+      // load at a time. Stops (rather than placing a partial load) if a
+      // full load would push any day from the delivery through week's end
+      // above hardMaxStock.
       for (var guard2 = 0; guard2 < 50; guard2++) {
         var sim2 = simulate();
-        var need = s.targetStock - sim2[n - 1];
-        if (need <= 0) break;
+        if (sim2[n - 1] >= s.targetStock) break;
         var placeIdx2 = latestSlot();
         if (placeIdx2 === -1) break;
-        var amount2 = Math.min(s.loadSize, Math.ceil(need / 10) * 10);
-        var headroom = Infinity;
-        for (var h = placeIdx2; h < n; h++) { headroom = Math.min(headroom, s.hardMaxStock - sim2[h]); }
-        amount2 = Math.min(amount2, Math.max(0, headroom));
-        if (amount2 <= 0) break; // already at/above the hard ceiling through week's end — can't top up further
-        inboundPerDay[placeIdx2] += amount2;
+        var fits = true;
+        for (var h = placeIdx2; h < n; h++) { if (sim2[h] + s.loadSize > s.hardMaxStock) { fits = false; break; } }
+        if (!fits) break; // a full load here would breach the hard ceiling — stop topping up
+        inboundPerDay[placeIdx2] += s.loadSize;
       }
 
       g.days.forEach(function (r, i) {
@@ -631,10 +631,21 @@
       '</div>';
     }).join("");
 
+    var boardImportHtml =
+      '<div class="board-import" id="boardImport">' +
+        '<div class="board-dropzone" id="boardDropzone" tabindex="0" role="button" aria-label="Import packaging from the Live Brewery Board">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>' +
+          '<div class="board-dropzone__title">Drop the Live Brewery Board here to import packaging</div>' +
+          '<div class="board-dropzone__sub">Reads the \u201cKegs\u201d row of each week tab and fills blank Packaging cells in the window below \u2014 or <span class="board-dropzone__link">choose a file</span></div>' +
+        '</div>' +
+        '<input type="file" id="boardFileInput" accept=".xlsx,.xls" style="display:none;">' +
+        '<div class="board-import__status" id="boardImportStatus"></div>' +
+      '</div>';
+
     el.innerHTML =
       '<div class="card__head"><div class="card__head-left"><span class="tab" data-color="purple">02</span><div><h2 class="card__title">Daily tracking</h2>' +
       '<p class="card-hint">Opening inventory carries forward automatically \u2014 overwrite any day if an actual count differs. Red = below the ' + s.minStock.toLocaleString() + ' floor, amber = below the ' + s.targetStock.toLocaleString() + ' target, blue = above the ' + s.maxStock.toLocaleString() + ' ceiling.</p></div></div></div>' +
-      '<div class="card__body">' + blocksHtml + '</div>';
+      '<div class="card__body">' + boardImportHtml + blocksHtml + '</div>';
 
     el.querySelectorAll(".day-input").forEach(function (input) {
       input.addEventListener("input", function () {
@@ -653,6 +664,178 @@
         scheduleSave();
       });
     });
+
+    wireBoardImport(el);
+  }
+
+  /* ---------------------------------------------------------
+     LIVE BREWERY BOARD IMPORT
+     Drag-and-drop (or choose-file) import of the Live Brewery Board
+     workbook. Reads every sheet's "Date" row and "Kegs" row block
+     client-side (via SheetJS/xlsx.js \u2014 nothing is uploaded anywhere),
+     sums each day's kegged quantity (plain numbers, plus the number
+     following an "NZ EX ##" export tag), and fills it into that day's
+     Packaging cell \u2014 but only for days currently in view and currently
+     blank, so a manually-entered Packaging number is never overwritten.
+  --------------------------------------------------------- */
+  function wireBoardImport(scopeEl) {
+    var dz = scopeEl.querySelector("#boardDropzone");
+    var input = scopeEl.querySelector("#boardFileInput");
+    if (!dz || !input) return;
+
+    dz.addEventListener("click", function () { input.click(); });
+    dz.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+    dz.addEventListener("dragover", function (e) { e.preventDefault(); dz.classList.add("is-drag"); });
+    dz.addEventListener("dragleave", function () { dz.classList.remove("is-drag"); });
+    dz.addEventListener("drop", function (e) {
+      e.preventDefault();
+      dz.classList.remove("is-drag");
+      var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) handleBoardFile(file);
+    });
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) handleBoardFile(input.files[0]);
+      input.value = "";
+    });
+  }
+
+  function setBoardStatus(msg, isError) {
+    var statusEl = document.getElementById("boardImportStatus");
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.className = "board-import__status" + (isError ? " is-error" : "");
+  }
+
+  function handleBoardFile(file) {
+    if (typeof XLSX === "undefined") {
+      setBoardStatus("Couldn't load the spreadsheet reader \u2014 check your connection and try again.", true);
+      return;
+    }
+    setBoardStatus("Reading " + file.name + "\u2026");
+    var reader = new FileReader();
+    reader.onerror = function () { setBoardStatus("Couldn't read that file.", true); };
+    reader.onload = function (e) {
+      try {
+        var wb = XLSX.read(new Uint8Array(e.target.result), { type: "array", cellDates: true });
+        var kegsByDate = extractKegsByDate(wb);
+        applyKegsToLedger(kegsByDate);
+      } catch (err) {
+        setBoardStatus("Couldn't read that workbook \u2014 is it the Live Brewery Board export?", true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // Scans every sheet for a "Date" row and a "Kegs" row block (same layout
+  // in every weekly tab: 7 day-groups of 3 columns \u2014 product, vessel,
+  // quantity \u2014 starting at column B, one group per weekday Mon\u2192Sun).
+  // Returns { "YYYY-MM-DD": totalKegsThatDay }, merged across every sheet
+  // that contains a given date (so it doesn't matter which tab a date
+  // lives in, or how the tabs are named/ordered).
+  function extractKegsByDate(wb) {
+    var GROUP_COLS = [2, 5, 8, 11, 14, 17, 20]; // 1-indexed: B,E,H,K,N,Q,T (Mon..Sun)
+    var out = {};
+    // Only bother fully parsing a sheet if its week is within (roughly) the
+    // app's current window \u2014 skips the dozens of historical/old tabs fast.
+    var winStart = parseISO(mondayOf(windowStart()));
+    var winEnd = parseISO(windowEnd());
+    var loMs = winStart.getTime() - 8 * 86400000, hiMs = winEnd.getTime() + 8 * 86400000;
+
+    wb.SheetNames.forEach(function (name) {
+      var ws = wb.Sheets[name];
+      if (!ws || !ws["!ref"]) return;
+      var range = XLSX.utils.decode_range(ws["!ref"]);
+      var dateRow = -1, kegsRow = -1, kegsRowEnd = -1;
+      for (var r = range.s.r; r <= Math.min(range.e.r, 80); r++) {
+        var a = cellStr(ws, r, 0);
+        if (a === "date" && dateRow === -1) dateRow = r;
+        if (a === "kegs" && kegsRow === -1) {
+          kegsRow = r;
+          kegsRowEnd = mergedRowEnd(ws, r, 0);
+        }
+      }
+      if (dateRow === -1 || kegsRow === -1) return;
+
+      // Quick in-range check using the Monday date before scanning the block.
+      var mondayCellDate = cellDate(ws, dateRow, GROUP_COLS[0] - 1);
+      if (!mondayCellDate) return;
+      var t = mondayCellDate.getTime();
+      if (t < loMs || t > hiMs) return;
+
+      GROUP_COLS.forEach(function (col0based1, gi) {
+        var dateCol = col0based1 - 1;
+        var qtyCol = dateCol + 2;
+        var d = cellDate(ws, dateRow, dateCol);
+        if (!d) return;
+        var iso = toISO(d);
+        var total = 0;
+        for (var rr = kegsRow; rr <= kegsRowEnd; rr++) {
+          total += kegsCellValue(ws, rr, qtyCol);
+        }
+        if (total > 0) out[iso] = (out[iso] || 0) + total;
+      });
+    });
+    return out;
+  }
+
+  function mergedRowEnd(ws, row, col) {
+    var merges = ws["!merges"] || [];
+    for (var i = 0; i < merges.length; i++) {
+      var m = merges[i];
+      if (m.s.c === col && m.s.r === row) return m.e.r;
+    }
+    return row;
+  }
+  function cellStr(ws, r, c) {
+    var cell = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+    if (!cell || cell.v == null) return "";
+    return String(cell.v).trim().toLowerCase();
+  }
+  function cellDate(ws, r, c) {
+    var cell = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+    if (!cell || cell.v == null) return null;
+    if (cell.v instanceof Date) return cell.v;
+    if (typeof cell.v === "number" && XLSX.SSF && XLSX.SSF.parse_date_code) {
+      var pd = XLSX.SSF.parse_date_code(cell.v);
+      if (pd) return new Date(pd.y, pd.m - 1, pd.d);
+    }
+    return null;
+  }
+  // A "Kegs" row quantity cell is either a plain number, or a text tag
+  // like "NZ EX 48" \u2014 those export kegs still come out of the same
+  // physical keg pool, so the trailing number counts too.
+  function kegsCellValue(ws, r, c) {
+    var cell = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+    if (!cell || cell.v == null || cell.v === "") return 0;
+    if (typeof cell.v === "number") return cell.v;
+    var m = String(cell.v).match(/NZ\s*EX\D*(\d+(?:\.\d+)?)/i);
+    return m ? parseFloat(m[1]) : 0;
+  }
+
+  function applyKegsToLedger(kegsByDate) {
+    var dates = Object.keys(kegsByDate);
+    if (!dates.length) {
+      setBoardStatus("No kegging found in that file for the weeks currently shown below.", true);
+      return;
+    }
+    var winDays = windowDays();
+    var filled = 0, skipped = 0, outOfWindow = 0;
+    dates.forEach(function (iso) {
+      if (winDays.indexOf(iso) === -1) { outOfWindow++; return; }
+      var existing = dayEntry(iso).packaging;
+      if (existing !== "" && existing != null) { skipped++; return; }
+      setDayField(iso, "packaging", String(Math.round(kegsByDate[iso])));
+      filled++;
+    });
+    if (filled > 0) {
+      scheduleSave();
+      renderAll();
+      showToast("Imported packaging for " + filled + " day" + (filled === 1 ? "" : "s") + " from the Live Brewery Board");
+    }
+    var statusMsg = filled > 0
+      ? ("Filled " + filled + " day" + (filled === 1 ? "" : "s") + (skipped > 0 ? "; left " + skipped + " day" + (skipped === 1 ? "" : "s") + " already entered" : "") + ".")
+      : (skipped > 0 ? "Every matching day already has a Packaging value \u2014 clear a cell first to re-import it." : "No kegging found in that file for the weeks currently shown below.");
+    setBoardStatus(statusMsg, filled === 0);
   }
 
   /* ---------------------------------------------------------
@@ -1008,23 +1191,21 @@
 
     window.addEventListener("beforeunload", function () { if (App.dirty) saveNow(false); });
 
+    // Cloud sync (Cloudflare KV) is auto-detected, not configured — always
+    // attempt it; every call degrades harmlessly to localStorage-only if
+    // the site isn't deployed with the KV function/binding (see README).
     var syncNowBtn = document.getElementById("syncNowBtn");
-    if (cloudReady()) {
-      syncNowBtn.addEventListener("click", function () {
-        if (App.dirty) saveNow(false);
-        syncNowBtn.classList.add("is-spinning");
-        setTimeout(function () { syncNowBtn.classList.remove("is-spinning"); }, 650);
-        pullFromCloud(false);
-      });
-      document.addEventListener("visibilitychange", function () { if (!document.hidden && !App.dirty) pullFromCloud(true); });
-      window.addEventListener("focus", function () { if (!App.dirty) pullFromCloud(true); });
+    syncNowBtn.addEventListener("click", function () {
+      if (App.dirty) saveNow(false);
+      syncNowBtn.classList.add("is-spinning");
+      setTimeout(function () { syncNowBtn.classList.remove("is-spinning"); }, 650);
+      pullFromCloud(false);
+    });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden && !App.dirty) pullFromCloud(true); });
+    window.addEventListener("focus", function () { if (!App.dirty) pullFromCloud(true); });
 
-      pullFromCloud(true);
-      App.pollTimer = setInterval(function () { if (!App.dirty) pullFromCloud(true); }, Math.max(8, cloudCfg.pollSeconds || 20) * 1000);
-    } else {
-      syncNowBtn.style.display = "none";
-      setSyncStatus("saved");
-    }
+    pullFromCloud(true);
+    App.pollTimer = setInterval(function () { if (!App.dirty) pullFromCloud(true); }, Math.max(8, CLOUD_POLL_SECONDS) * 1000);
   }
 
   function showFatalError(err) {

@@ -1,31 +1,32 @@
 /**
- * BALTER BREWING — KEG ORDERING DESK
+ * BALTER BREWING — KEG TRACKER
  * Site configuration.
  *
  * ---------------------------------------------------------------
- * MULTI-DEVICE SYNC (optional but recommended)
+ * MULTI-DEVICE SYNC (Cloudflare KV — no keys to manage)
  * ---------------------------------------------------------------
- * By default this sheet only saves to the device/browser you're using
- * (via localStorage). To make it sync across phones, laptops, and the
- * warehouse tablet at once, wire up a free JSONBin.io bin:
+ * Multi-device sync is handled by a Cloudflare Pages Function
+ * (functions/api/keg-state.js) backed by a Cloudflare KV namespace —
+ * nothing to configure here. The app calls that same-origin endpoint
+ * automatically on every load and save; if it isn't reachable (e.g. the
+ * KV binding hasn't been set up yet, or this is deployed somewhere other
+ * than Cloudflare Pages) it quietly falls back to saving on this device
+ * only — nothing breaks either way.
  *
- *   1. Create a free account at https://jsonbin.io
- *   2. Create a NEW bin (any starting content, e.g. {}) — copy its Bin ID
- *   3. Copy your "X-Master-Key" from the JSONBin dashboard (API Keys)
- *   4. Paste both values below and set enabled: true
- *   5. Redeploy — every device that opens this site will now read/write
- *      the same bin, polling for changes every ~20 seconds and whenever
- *      the tab regains focus.
+ * One-time setup to turn sync on, see README.md "Multi-device sync" for
+ * the full walk-through:
+ *   1. Cloudflare dashboard → Workers & Pages → KV → Create a namespace.
+ *   2. This Pages project → Settings → Functions → KV namespace bindings
+ *      → Add binding → Variable name: KEG_KV → pick that namespace.
+ *   3. Redeploy.
  *
- * IMPORTANT: this needs its OWN bin, separate from the Logistics Daily
- * Handover sheet (or any other sheet) — don't reuse a bin across tools,
- * or they'll overwrite each other's data.
+ * The two options below are optional escape hatches — leave them alone
+ * unless you have a specific reason to change them (e.g. you renamed the
+ * function's route, or want devices to check in more/less often).
  */
 window.KEG_CONFIG = {
   cloudSync: {
-    enabled: false,
-    binId: "",
-    apiKey: "",
-    pollSeconds: 20        // how often other devices are checked for updates
+    endpoint: "/api/keg-state", // path to the Cloudflare Pages Function above
+    pollSeconds: 15             // how often other devices are checked for updates
   }
 };
