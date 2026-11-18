@@ -7,6 +7,6 @@
 # project name exactly (find it in the dashboard URL, or under your
 # project's Settings — General). If it doesn't match, the deploy will
 # either fail or create/target a different project.
-name = "balter-keg-tracker"
+name = "kegtracker"
 pages_build_output_dir = "."
 compatibility_date = "2026-11-18"
