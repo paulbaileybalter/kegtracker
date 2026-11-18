@@ -1004,29 +1004,100 @@
   /* ---------------------------------------------------------
      RENDER: ORDER HISTORY
   --------------------------------------------------------- */
+  var historyEditIdx = -1; // index into App.history of the row being edited, or -1
+
   function renderHistory() {
     var el = document.getElementById("historySection");
-    var rows = App.history.slice().reverse();
+    var rows = App.history.map(function (h, i) { return { h: h, i: i }; }).reverse();
+    var inp = function (field, val, w) {
+      return '<input type="text" inputmode="numeric" class="day-input" data-hfield="' + field + '" value="' + esc(String(val)) + '" style="width:' + (w || 70) + 'px;">';
+    };
 
     el.innerHTML =
       '<div class="card__head"><div class="card__head-left"><span class="tab" data-color="gold">05</span><div><h2 class="card__title">Order history</h2>' +
-      '<p class="card-hint">Confirmed weekly orders, most recent first</p></div></div></div>' +
+      '<p class="card-hint">Confirmed weekly orders, most recent first \u2014 use Edit to correct a logged order</p></div></div></div>' +
       '<div class="card__body">' +
         (rows.length
-          ? '<div class="table-scroll"><table class="dtable"><thead><tr><th class="col-med">Logged</th><th class="col-med">Week</th><th class="col-narrow">Stock on hand</th><th class="col-narrow">Loads</th><th class="col-narrow">Kegs</th><th class="col-med">Backload</th></tr></thead><tbody>' +
-            rows.map(function (h) {
-              return '<tr>' +
+          ? '<div class="table-scroll"><table class="dtable"><thead><tr><th class="col-med">Logged</th><th class="col-med">Week</th><th class="col-narrow">Stock on hand</th><th class="col-narrow">Loads</th><th class="col-narrow">Kegs</th><th class="col-med">Backload</th><th></th></tr></thead><tbody>' +
+            rows.map(function (row) {
+              var h = row.h, i = row.i;
+              if (i === historyEditIdx) {
+                return '<tr data-hidx="' + i + '">' +
+                  '<td>' + esc(new Date(h.loggedAt).toLocaleDateString("en-AU")) + '</td>' +
+                  '<td><input type="date" class="day-input" data-hfield="weekStart" value="' + esc(h.weekStart || h.stocktakeDate || "") + '" style="width:140px;"></td>' +
+                  '<td>' + inp("stockOnHand", h.stockOnHand || 0) + '</td>' +
+                  '<td>' + inp("loads", h.loads || 0, 55) + '</td>' +
+                  '<td>' + inp("kegsOrdered", h.kegsOrdered || 0) + '</td>' +
+                  '<td>' + inp("backloadCount", h.backloadCount || 0, 55) + '</td>' +
+                  '<td style="white-space:nowrap;"><button type="button" class="btn btn--primary btn--sm" data-hact="save">Save</button> ' +
+                  '<button type="button" class="btn btn--ghost btn--sm" data-hact="cancel">Cancel</button></td>' +
+                '</tr>';
+              }
+              return '<tr data-hidx="' + i + '">' +
                 '<td>' + esc(new Date(h.loggedAt).toLocaleDateString("en-AU")) + '</td>' +
                 '<td>' + esc(formatShort(h.weekStart || h.stocktakeDate)) + '</td>' +
                 '<td style="font-family:var(--font-data);">' + (h.stockOnHand || 0).toLocaleString() + '</td>' +
                 '<td style="font-family:var(--font-data);font-weight:700;">' + h.loads + '</td>' +
                 '<td style="font-family:var(--font-data);">' + (h.kegsOrdered || 0).toLocaleString() + '</td>' +
-                '<td>' + (h.backloadCount > 0 ? '<span class="tag tag--purple">' + h.backloadCount + '</span>' : '<span class="tag tag--neutral">—</span>') + '</td>' +
+                '<td>' + (h.backloadCount > 0 ? '<span class="tag tag--purple">' + h.backloadCount + '</span>' : '<span class="tag tag--neutral">\u2014</span>') + '</td>' +
+                '<td style="white-space:nowrap;"><button type="button" class="btn btn--ghost btn--sm" data-hact="edit">Edit</button> ' +
+                '<button type="button" class="btn btn--ghost btn--sm" data-hact="delete">Delete</button></td>' +
               '</tr>';
             }).join("") +
           '</tbody></table></div>'
           : '<p class="card-hint">No orders logged yet \u2014 confirm a week\u2019s order in the Delivery schedule above to start a record.</p>') +
       '</div>';
+
+    el.querySelectorAll("[data-hact]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var tr = btn.closest("tr");
+        var idx = parseInt(tr.getAttribute("data-hidx"), 10);
+        var act = btn.getAttribute("data-hact");
+        if (act === "edit") { historyEditIdx = idx; renderHistory(); }
+        else if (act === "cancel") { historyEditIdx = -1; renderHistory(); }
+        else if (act === "save") { saveHistoryEdit(idx, tr); }
+        else if (act === "delete") { deleteHistoryEntry(idx); }
+      });
+    });
+  }
+
+  // The backload rotation counter advances by one per load when an order is
+  // confirmed, so correcting the number of loads shifts it by the same amount.
+  function shiftBackloadCounter(delta) {
+    var n = Math.max(1, App.settings.backloadEvery);
+    App.settings.deliveryCounter = (((App.settings.deliveryCounter + delta) % n) + n) % n;
+  }
+
+  function saveHistoryEdit(idx, tr) {
+    var h = App.history[idx];
+    if (!h) return;
+    var get = function (f) { return tr.querySelector('[data-hfield="' + f + '"]').value; };
+    var nn = function (f) { return Math.max(0, parseInt(String(get(f)).replace(/[^0-9]/g, ""), 10) || 0); };
+    var oldLoads = h.loads || 0;
+    var week = get("weekStart");
+    if (week) h.weekStart = week;
+    h.stockOnHand = nn("stockOnHand");
+    h.loads = nn("loads");
+    h.kegsOrdered = nn("kegsOrdered");
+    h.backloadCount = nn("backloadCount");
+    h.editedAt = new Date().toISOString();
+    if (h.loads !== oldLoads) shiftBackloadCounter(h.loads - oldLoads);
+    historyEditIdx = -1;
+    saveNow(false);
+    renderAll();
+    showToast("Order updated");
+  }
+
+  function deleteHistoryEntry(idx) {
+    var h = App.history[idx];
+    if (!h) return;
+    if (!window.confirm("Delete the logged order for week of " + formatShort(h.weekStart || h.stocktakeDate) + "?\n\nThis removes it from the history and rewinds the backload rotation by " + (h.loads || 0) + " load(s). Delivery entries in the day grid are not affected.")) return;
+    shiftBackloadCounter(-(h.loads || 0));
+    App.history.splice(idx, 1);
+    historyEditIdx = -1;
+    saveNow(false);
+    renderAll();
+    showToast("Order deleted");
   }
 
   /* ---------------------------------------------------------
