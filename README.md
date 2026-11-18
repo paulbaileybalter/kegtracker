@@ -22,8 +22,10 @@ weekly summary.
 - `app.js` — calculation and interaction logic
 - `config.js` — cloud sync settings (optional overrides only — see "Multi-
   device sync" below)
-- `functions/api/keg-state.js` — Cloudflare Pages Function backing
-  multi-device sync via Cloudflare KV
+- `worker.js` — Cloudflare Worker entry point; serves the static site and
+  backs multi-device sync via Cloudflare KV (`/api/keg-state`)
+- `wrangler.toml` — Worker configuration (name, static-asset binding, KV
+  namespace binding)
 - `bubbles.js` — decorative background effect (skips itself under
   prefers-reduced-motion)
 - `manifest.json` — home-screen icon metadata
@@ -122,50 +124,58 @@ with formatting intact), plain-text copy, or download as an image.
 ## Multi-device sync — Cloudflare KV
 
 Syncs the office laptop, your phone, and the warehouse tablet automatically
-— no account or API key to create. It's a tiny Cloudflare Pages Function
-(`functions/api/keg-state.js`) backed by a Cloudflare KV namespace, and it's
-**only available when this site is deployed on Cloudflare Pages** (see
-below) — deployed elsewhere (e.g. Netlify), the function simply doesn't
-exist, every call fails harmlessly, and the tool keeps working perfectly
-well as a single-device, localStorage-only sheet.
+— no account or API key to create. It's handled by this project's own
+Cloudflare **Worker** (`worker.js`), which serves the site itself and also
+runs the `/api/keg-state` route backed by a Cloudflare KV namespace. If the
+KV binding isn't set up yet, every sync call just fails harmlessly and the
+tool keeps working perfectly well as a single-device, localStorage-only
+sheet.
 
-One-time setup, after your first deploy to Cloudflare Pages:
+One-time setup, after your first deploy:
 1. Cloudflare dashboard → **Workers & Pages → KV** → **Create a namespace**
-   (any name, e.g. `keg-ordering-portal`)
-2. Your Pages project → **Settings → Functions → KV namespace bindings** →
-   **Add binding** → Variable name **`KEG_KV`** → pick the namespace you
-   just created → **Save**
-3. Redeploy (or trigger a retry on the latest deployment) so the binding
-   takes effect
+   (any name, e.g. `keg-tracker-kv`) — copy its **id**
+2. Either:
+   - put that id into `wrangler.toml` under `[[kv_namespaces]]` →
+     `id = "..."`, then redeploy (`npx wrangler deploy`), **or**
+   - skip editing the file and instead go to your Worker's own
+     **Settings → Bindings → Add → KV namespace**, variable name
+     **`KEG_KV`**, pick the namespace you just created, **Save** (this
+     takes effect immediately, no redeploy needed)
 
 After that, every device that opens the site reads and writes the same KV
 key, polling for changes every ~15 seconds and whenever the tab regains
 focus — the "Save status" pill shows **Synced across devices** once it's
 confirmed the connection; until then it shows **Saved to this device**,
-which just means it hasn't reached the KV endpoint yet (or isn't deployed
-on Cloudflare Pages).
+which just means it hasn't reached the KV endpoint yet.
 
 Use a **separate KV namespace** from any other Balter Brewing tool — don't
 point two tools at the same one, or they'll overwrite each other's data.
 
 ## Deploying
 
-### Cloudflare Pages (recommended — enables multi-device sync)
-1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Upload
-   assets**
-2. Upload the **entire contents of this folder, including the `functions/`
-   folder** — Pages picks up anything under `functions/` automatically,
-   nothing to build or configure beyond the KV binding above
-3. Deploy, then follow the one-time KV setup above to turn on sync
+### Cloudflare Workers (recommended — enables multi-device sync)
+This site deploys as a **Worker with static assets**, not a classic Pages
+project — `worker.js` + `wrangler.toml` are the pieces that make that work.
+
+1. Via Wrangler CLI: from this folder, run `npx wrangler deploy` (installs
+   Wrangler on first run if needed). Before your first deploy, check
+   `wrangler.toml` — `name` should match the Worker name you want (it
+   becomes `<name>.<your-subdomain>.workers.dev`).
+2. Or, if deploying through a Git-connected Cloudflare build pipeline,
+   the **Deploy command** in that project's **Settings → Builds &
+   deployments** must be `npx wrangler deploy` (the default) — do **not**
+   use `wrangler pages deploy`, which is for classic Pages projects only.
+3. Follow the one-time KV setup above to turn on multi-device sync.
 
 ### Netlify
 1. Go to [app.netlify.com/drop](https://app.netlify.com/drop)
-2. Drag the whole `balter-keg-ordering` folder onto the page — **if you're
-   redeploying over an existing site, drag the folder onto that site's own
-   deploy page (or delete the old deploy first)** so old files don't linger
+2. Drag the whole site folder onto the page, **excluding `worker.js` and
+   `wrangler.toml`** (Netlify can't run either) — if you're redeploying
+   over an existing site, drag onto that site's own deploy page (or delete
+   the old deploy first) so old files don't linger
 3. Netlify gives you a live URL immediately — this works great for a single
-   device, but multi-device sync needs Cloudflare Pages (above), since
-   Netlify doesn't run the `functions/api/keg-state.js` function as-is
+   device, but multi-device sync needs the Cloudflare Worker above, since
+   Netlify can't run `worker.js`
 
 Nothing needs building — static files only. If you deployed an earlier
 version of this tool already, make sure this folder fully replaces the old
